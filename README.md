@@ -12,9 +12,15 @@ MCP-Slicer connects 3D Slicer with model clients like Claude Desktop or Cline th
 
 ## Features
 
-1. list_nodes: List and filter Slicer MRML nodes and view their properties
+1. **list_nodes**: List and filter Slicer MRML nodes and view their properties
 
-2. execute_python_code: Execute Python code in the Slicer environment
+2. **execute_python_code**: Execute Python code in the Slicer environment
+
+3. **capture_screenshot**: Capture real-time screenshots of Slicer views
+   - Full application window (including module panels)
+   - Individual slice views (Red/Yellow/Green)
+   - 3D rendering view
+   - Enables complete REACT loop with visual feedback
 
 ## Installation
 
@@ -105,6 +111,20 @@ Make sure you see the corresponding slicer tools added to the Claude Desktop App
 > Draw a translucent green cube of 8 cm in the Slicer scene, mark its vertices, and then draw a red sphere inscribed in it.
 
 <img width="1045" alt="example_code_execute_en" src="https://github.com/zhaoyouj/mcp-slicer/blob/main/docs/images/example_code_execute_en.png?raw=true" />
+
+### - capture_screenshot
+
+> Capture the current state of Slicer to provide visual feedback to AI
+
+**Usage examples:**
+- `capture_screenshot()` - Capture full application window
+- `capture_screenshot(view_type="slice", view_name="red")` - Capture Red slice view
+- `capture_screenshot(view_type="3d", camera_axis="A")` - Capture 3D view from anterior
+
+This enables a complete REACT loop where AI can:
+1. **Reason** about what to do
+2. **Act** using `execute_python_code`
+3. **Observe** the result using `capture_screenshot`
 
 ## Technical Details
 
