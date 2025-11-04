@@ -268,5 +268,3 @@ def capture_screenshot(
         return [TextContent(type="text", text=f"Connection error: {str(e)}. Make sure Slicer Web Server is running.")]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
-    except Exception as e:
-        return [{"type": "text", "text": f"Screenshot capture failed: {str(e)}"}]
