@@ -4,11 +4,43 @@ from mcp.types import TextContent, ImageContent
 import requests
 import json
 import base64
+from urllib.parse import urlparse
+from typing import Optional
 
 # Create an MCP server
 mcp = FastMCP("SlicerMCP")
 
 SLICER_WEB_SERVER_URL = "http://localhost:2016/slicer"
+
+
+def get_proxy_config(url: str) -> Optional[dict]:
+    """
+    Get proxy configuration for requests based on URL.
+    
+    For localhost/127.0.0.1 connections, always disable proxy to avoid
+    connection issues when system proxy is configured but not running.
+    
+    For other connections, return None to use system default proxy settings
+    (if configured via environment variables).
+    
+    Args:
+        url: The target URL for the request
+        
+    Returns:
+        dict: Proxy configuration dict for requests library
+        - For localhost: {'http': None, 'https': None} to disable proxy
+        - For other hosts: None to use system defaults
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    
+    # Always bypass proxy for localhost connections
+    if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith("127."):
+        return {'http': None, 'https': None}
+    
+    # For other connections, return None to use system proxy settings
+    # if available via HTTP_PROXY, HTTPS_PROXY environment variables
+    return None
 
 # Add list_nodes tool
 @mcp.tool()
@@ -62,7 +94,8 @@ def list_nodes(filter_type: str = "names", class_name: str = None,
             params["id"] = id
 
         # Send GET request to Slicer Web Server
-        response = requests.get(api_url, params=params)
+        # Smart proxy handling: disable for localhost, use system default for others
+        response = requests.get(api_url, params=params, proxies=get_proxy_config(api_url))
         response.raise_for_status()
         
         # Process response based on filter type
@@ -119,7 +152,8 @@ def execute_python_code(code: str) -> dict:
     api_url = f"{SLICER_WEB_SERVER_URL}/exec"
     headers = {'Content-Type': 'text/plain'}
     try:
-        response = requests.post(api_url, data=code.encode('utf-8'), headers=headers)
+        # Smart proxy handling: disable for localhost, use system default for others
+        response = requests.post(api_url, data=code.encode('utf-8'), headers=headers, proxies=get_proxy_config(api_url))
         result_data = response.json()
         
         if isinstance(result_data, dict) and not result_data.get("success", True):
@@ -238,7 +272,8 @@ def capture_screenshot(
             return [TextContent(type="text", text=f"Error: Invalid view_type '{view_type}'. Must be 'application', 'slice', or '3d'")]
 
         # Make the request to Slicer Web Server
-        response = requests.get(api_url, params=params)
+        # Smart proxy handling: disable for localhost, use system default for others
+        response = requests.get(api_url, params=params, proxies=get_proxy_config(api_url))
         response.raise_for_status()
         
         # Check if response is an image
