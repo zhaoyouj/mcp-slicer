@@ -1,7 +1,9 @@
 # server.py
 from mcp.server.fastmcp import FastMCP
+from mcp.types import TextContent, ImageContent
 import requests
 import json
+import base64
 
 # Create an MCP server
 mcp = FastMCP("SlicerMCP")
@@ -145,3 +147,124 @@ def execute_python_code(code: str) -> dict:
             "success": False,
             "message": f"Connection error: {str(e)}"
             }
+
+
+# Add capture_screenshot tool
+@mcp.tool()
+def capture_screenshot(
+    view_type: str = "application",
+    view_name: str = None,
+    slice_offset: float = None,
+    slice_orientation: str = None,
+    camera_axis: str = None,
+    image_size: int = None
+) -> list:
+    """
+    Capture a screenshot from 3D Slicer's views.
+
+    This tool provides real-time visual feedback of the current state of Slicer,
+    enabling AI to observe the GUI and make informed decisions in a complete REACT loop.
+
+    Parameters:
+    view_type (str): Type of screenshot to capture. Options:
+        - "application" (default): Full application window including all panels and views
+        - "slice": A specific slice view (Red/Yellow/Green)
+        - "3d": The 3D rendering view
+    
+    view_name (str): For slice views, specify which view to capture.
+        Options: "red", "yellow", "green"
+        Only used when view_type="slice"
+    
+    slice_offset (float): For slice views, offset in mm relative to slice origin.
+        Only used when view_type="slice"
+    
+    slice_orientation (str): For slice views, specify orientation.
+        Options: "axial", "sagittal", "coronal"
+        Only used when view_type="slice"
+    
+    camera_axis (str): For 3D views, specify camera view direction.
+        Options: "L" (Left), "R" (Right), "A" (Anterior), "P" (Posterior), 
+                 "I" (Inferior), "S" (Superior)
+        Only used when view_type="3d"
+    
+    image_size (int): Pixel size of output image (for slice and 3D views).
+        Only used when view_type="slice" or view_type="3d"
+
+    Returns:
+        A list containing text and/or image content. The image is returned
+        in MCP's standard format for proper display in AI clients.
+
+    Examples:
+    - Capture full application: {"tool": "capture_screenshot", "arguments": {"view_type": "application"}}
+    - Capture Red slice view: {"tool": "capture_screenshot", "arguments": {"view_type": "slice", "view_name": "red"}}
+    - Capture 3D view from anterior: {"tool": "capture_screenshot", "arguments": {"view_type": "3d", "camera_axis": "A"}}
+    - Capture axial slice: {"tool": "capture_screenshot", "arguments": {"view_type": "slice", "view_name": "red", "slice_orientation": "axial"}}
+    """
+    try:
+        # Determine the API endpoint based on view_type
+        if view_type == "application":
+            api_url = f"{SLICER_WEB_SERVER_URL}/screenshot"
+            params = {}
+            description = "full application window"
+            
+        elif view_type == "slice":
+            if not view_name:
+                return [TextContent(type="text", text="Error: view_name is required for slice screenshots (red, yellow, or green)")]
+            
+            api_url = f"{SLICER_WEB_SERVER_URL}/slice"
+            params = {"view": view_name.lower()}
+            description = f"{view_name} slice view"
+            
+            # Add optional parameters
+            if slice_offset is not None:
+                params["offset"] = slice_offset
+            if slice_orientation:
+                params["orientation"] = slice_orientation.lower()
+                description += f" ({slice_orientation})"
+            if image_size:
+                params["size"] = image_size
+                
+        elif view_type == "3d":
+            api_url = f"{SLICER_WEB_SERVER_URL}/threeD"
+            params = {}
+            description = "3D view"
+            
+            # Add optional parameters
+            if camera_axis:
+                params["lookFromAxis"] = camera_axis.upper()
+                description += f" from {camera_axis} axis"
+                
+        else:
+            return [TextContent(type="text", text=f"Error: Invalid view_type '{view_type}'. Must be 'application', 'slice', or '3d'")]
+
+        # Make the request to Slicer Web Server
+        response = requests.get(api_url, params=params)
+        response.raise_for_status()
+        
+        # Check if response is an image
+        if response.headers.get('Content-Type', '').startswith('image/'):
+            # Convert image bytes to base64
+            image_base64 = base64.b64encode(response.content).decode('utf-8')
+            
+            # Return using MCP's content types
+            return [
+                TextContent(
+                    type="text",
+                    text=f"Screenshot of {description} captured successfully"
+                ),
+                ImageContent(
+                    type="image",
+                    data=image_base64,
+                    mimeType="image/png"
+                )
+            ]
+        else:
+            # Unexpected response type
+            return [TextContent(type="text", text=f"Error: Unexpected response type: {response.headers.get('Content-Type')}")]
+            
+    except requests.exceptions.HTTPError as e:
+        return [TextContent(type="text", text=f"HTTP Error {e.response.status_code}: {str(e)}")]
+    except requests.exceptions.RequestException as e:
+        return [TextContent(type="text", text=f"Connection error: {str(e)}. Make sure Slicer Web Server is running.")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Error: {str(e)}")]

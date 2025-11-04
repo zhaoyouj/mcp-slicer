@@ -12,9 +12,15 @@ MCP-Slicer 通过模型上下文协议(MCP)将 3D Slicer 与 例如 Claude Deskt
 
 ## 功能
 
-1. list_nodes: 用于列出和过滤 Slicer MRML 节点并查看其属性
+1. **list_nodes**: 用于列出和过滤 Slicer MRML 节点并查看其属性
 
-2. execute_python_code: 允许在 Slicer 环境中执行 Python 代码
+2. **execute_python_code**: 允许在 Slicer 环境中执行 Python 代码
+
+3. **capture_screenshot**: 实时捕获 Slicer 视图截图
+   - 完整应用窗口（包括模块面板）
+   - 单独的切片视图（Red/Yellow/Green）
+   - 3D 渲染视图
+   - 实现完整的 REACT 循环，提供视觉反馈
 
 ## 安装
 
@@ -102,6 +108,20 @@ Go to Claude > Settings > Developer > Edit Config > claude_desktop_config.json t
 > 在 Slicer 场景中绘制一个 8cm 的半透明绿色立方体，标出它的顶点，再在其中画一个内切的红色球体
 
 <img width="1045" alt="example_code_execute_en" src="https://github.com/zhaoyouj/mcp-slicer/blob/main/docs/images/example_code_execute_cn.png?raw=true" />
+
+### - capture_screenshot
+
+> 捕获 Slicer 当前状态，为 AI 提供视觉反馈
+
+**使用示例：**
+- `capture_screenshot()` - 捕获完整应用窗口
+- `capture_screenshot(view_type="slice", view_name="red")` - 捕获 Red 切片视图
+- `capture_screenshot(view_type="3d", camera_axis="A")` - 从前方捕获 3D 视图
+
+这实现了完整的 REACT 循环，AI 可以：
+1. **推理**（Reason）要做什么
+2. **行动**（Act）使用 `execute_python_code`
+3. **观察**（Observe）使用 `capture_screenshot` 查看结果
 
 ## 技术细节
 
