@@ -6,6 +6,8 @@ import json
 import base64
 from urllib.parse import urlparse
 from typing import Optional
+from io import BytesIO
+from PIL import Image
 
 # Create an MCP server
 mcp = FastMCP("SlicerMCP")
@@ -188,54 +190,79 @@ def execute_python_code(code: str) -> dict:
 def capture_screenshot(
     view_type: str = "application",
     view_name: str = None,
-    slice_offset: float = None,
-    slice_orientation: str = None,
     camera_axis: str = None,
     image_size: int = None
 ) -> list:
-    """
-    Capture a screenshot from 3D Slicer's views.
+    """Capture a screenshot from 3D Slicer for visual inspection.
 
-    This tool provides real-time visual feedback of the current state of Slicer,
-    enabling AI to observe the GUI and make informed decisions in a complete REACT loop.
+    This MCP tool gives the model a "what you see is what you get"
+    view of Slicer, so it can reason about the current GUI state
+    (panels, slice views, 3D rendering, overlays, etc.) and take
+    follow‑up actions.
+
+    Behavior by ``view_type``:
+
+    - "application":
+        Capture the full Slicer application window, including all
+        dock widgets, slice views and 3D views, as a compressed JPEG.
+
+    - "slice":
+        Capture a single slice view (Red/Yellow/Green) as it currently
+        appears on screen. The screenshot includes whatever UI elements
+        are visible in that view (crosshair, orientation markers,
+        labels, segment overlays, etc.).
+
+    - "3d":
+        Capture the 3D rendering view. Optionally, a camera axis can
+        be specified to look from a standard anatomical direction.
 
     Parameters:
-    view_type (str): Type of screenshot to capture. Options:
-        - "application" (default): Full application window including all panels and views
-        - "slice": A specific slice view (Red/Yellow/Green)
-        - "3d": The 3D rendering view
-    
-    view_name (str): For slice views, specify which view to capture.
-        Options: "red", "yellow", "green"
-        Only used when view_type="slice"
-    
-    slice_offset (float): For slice views, offset in mm relative to slice origin.
-        Only used when view_type="slice"
-    
-    slice_orientation (str): For slice views, specify orientation.
-        Options: "axial", "sagittal", "coronal"
-        Only used when view_type="slice"
-    
-    camera_axis (str): For 3D views, specify camera view direction.
-        Options: "L" (Left), "R" (Right), "A" (Anterior), "P" (Posterior), 
-                 "I" (Inferior), "S" (Superior)
-        Only used when view_type="3d"
-    
-    image_size (int): Pixel size of output image (for slice and 3D views).
-        Only used when view_type="slice" or view_type="3d"
+        view_type (str): Type of screenshot to capture. Options:
+            - "application" (default): Full application window.
+            - "slice": One named slice view.
+            - "3d": The 3D rendering view.
 
-    Returns:
-        A list containing text and/or image content. The image is returned
-        in MCP's standard format for proper display in AI clients.
+        view_name (str): For slice views, which slice to capture.
+            Options: "red", "yellow", "green". Only used when
+            ``view_type="slice"``.
 
-    Examples:
-    - Capture full application: {"tool": "capture_screenshot", "arguments": {"view_type": "application"}}
-    - Capture Red slice view: {"tool": "capture_screenshot", "arguments": {"view_type": "slice", "view_name": "red"}}
-    - Capture 3D view from anterior: {"tool": "capture_screenshot", "arguments": {"view_type": "3d", "camera_axis": "A"}}
-    - Capture axial slice: {"tool": "capture_screenshot", "arguments": {"view_type": "slice", "view_name": "red", "slice_orientation": "axial"}}
+        camera_axis (str): For 3D views, camera view direction.
+            Options: "L" (Left), "R" (Right), "A" (Anterior),
+            "P" (Posterior), "I" (Inferior), "S" (Superior).
+            Only used when ``view_type="3d"``.
+
+        image_size (int | None): Target pixel size for the output image.
+            - For slice views, this is treated as a maximum for the
+              longer side of the captured pixmap; the image is scaled
+              with preserved aspect ratio up to this size.
+            - For application and 3D views, the screenshot is captured
+              at the current window size and may be downscaled if its
+              longest side exceeds an internal maximum (for size
+              control). Callers should not rely on an exact pixel
+              size, only that larger values produce higher‑resolution
+              images within reasonable limits.
+
+        Returns:
+                list[mcp.types.Content]:
+                        - ``TextContent``: A short, human‑readable description of
+                            what was captured (e.g. which view and approximate size).
+                        - ``ImageContent``: The screenshot image in base64‑encoded
+                            JPEG format when capture succeeds, or omitted if only an
+                            error message is returned.
+
+        Note:
+                This tool is primarily intended for multimodal models. Callers
+                should inspect the returned screenshot with their vision
+                capabilities (rather than relying only on the text summary)
+                when reasoning about Slicer's state, UI layout, overlays, or
+                other visual details.
+
+        The internal capture mechanism (e.g. which Slicer APIs or
+        endpoints are used) is considered an implementation detail and may
+        evolve over time without breaking this public contract.
     """
     try:
-        # Determine the API endpoint based on view_type
+        # Determine behavior based on view_type
         if view_type == "application":
             api_url = f"{SLICER_WEB_SERVER_URL}/screenshot"
             params = {}
@@ -244,19 +271,15 @@ def capture_screenshot(
         elif view_type == "slice":
             if not view_name:
                 return [TextContent(type="text", text="Error: view_name is required for slice screenshots (red, yellow, or green)")]
-            
-            api_url = f"{SLICER_WEB_SERVER_URL}/slice"
-            params = {"view": view_name.lower()}
-            description = f"{view_name} slice view"
-            
-            # Add optional parameters
-            if slice_offset is not None:
-                params["offset"] = slice_offset
-            if slice_orientation:
-                params["orientation"] = slice_orientation.lower()
-                description += f" ({slice_orientation})"
-            if image_size:
-                params["size"] = image_size
+
+            # Use internal /exec-based slice screenshot implementation to
+            # capture the render window with full GUI elements.
+            python_code = _build_slice_screenshot_python_code(
+                view_name=view_name,
+                image_size=image_size,
+            )
+            result = execute_python_code(python_code)
+            return _parse_slice_screenshot_result(result)
                 
         elif view_type == "3d":
             api_url = f"{SLICER_WEB_SERVER_URL}/threeD"
@@ -278,21 +301,53 @@ def capture_screenshot(
         
         # Check if response is an image
         if response.headers.get('Content-Type', '').startswith('image/'):
-            # Convert image bytes to base64
-            image_base64 = base64.b64encode(response.content).decode('utf-8')
-            
-            # Return using MCP's content types
-            return [
-                TextContent(
-                    type="text",
-                    text=f"Screenshot of {description} captured successfully"
-                ),
-                ImageContent(
-                    type="image",
-                    data=image_base64,
-                    mimeType="image/png"
-                )
-            ]
+            # Optimize image to reduce size
+            try:
+                # Open image from response bytes
+                img = Image.open(BytesIO(response.content))
+                
+                # Convert RGBA to RGB if necessary (for JPEG compatibility)
+                if img.mode == 'RGBA':
+                    # Create white background
+                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                    rgb_img.paste(img, mask=img.split()[3])  # Use alpha channel as mask
+                    img = rgb_img
+                elif img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                
+                # Resize if image is too large (max dimension 1920px)
+                max_dimension = 1920
+                if max(img.size) > max_dimension:
+                    ratio = max_dimension / max(img.size)
+                    new_size = tuple(int(dim * ratio) for dim in img.size)
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                
+                # Compress image to JPEG with quality 85
+                output_buffer = BytesIO()
+                img.save(output_buffer, format='JPEG', quality=85, optimize=True)
+                compressed_bytes = output_buffer.getvalue()
+                
+                # Convert to base64
+                image_base64 = base64.b64encode(compressed_bytes).decode('utf-8')
+                
+                # Return using MCP's content types
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Screenshot of {description} captured successfully (compressed)"
+                    ),
+                    ImageContent(
+                        type="image",
+                        data=image_base64,
+                        mimeType="image/jpeg"
+                    )
+                ]
+            except Exception as img_error:
+                # Fallback to original image if compression fails
+                return [TextContent(
+                    type="text", 
+                    text=f"Screenshot captured but compression failed: {str(img_error)}. Using original image."
+                )]
         else:
             # Unexpected response type
             return [TextContent(type="text", text=f"Error: Unexpected response type: {response.headers.get('Content-Type')}")]
@@ -303,3 +358,149 @@ def capture_screenshot(
         return [TextContent(type="text", text=f"Connection error: {str(e)}. Make sure Slicer Web Server is running.")]
     except Exception as e:
         return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+def _build_slice_screenshot_python_code(
+    view_name: str,
+    image_size: int = None,
+) -> str:
+    """Build Python code to capture a slice view screenshot via ``/exec``.
+
+    The generated code runs inside 3D Slicer using the Web Server ``/exec`` API.
+    It locates the requested slice widget (Red/Yellow/Green), forces a render,
+    grabs the corresponding ``sliceView`` Qt widget, optionally rescales the
+    pixmap, and returns a JSON object containing a base64-encoded JPEG image and
+    basic metadata.
+
+    The code does **not** modify any slice offsets, orientations, crosshair
+    state, or orientation markers; it simply captures the current visual state
+    of the slice view.
+
+    Args:
+        view_name: Name of the slice view ("red", "yellow", or "green").
+        image_size: Optional maximum size (in pixels) for the longer image
+            dimension. When provided, the pixmap is scaled with preserved
+            aspect ratio so that the longer side equals ``image_size``.
+
+    Returns:
+        A Python code string suitable for sending to the Slicer Web Server
+        ``/exec`` endpoint.
+    """
+    # Prepare optional parameter code (only resize is handled here)
+    resize_code = ""
+    if image_size:
+        resize_code = f"""
+        # Resize image
+        pixmap = pixmap.scaled(
+            {image_size}, {image_size},
+            qt.Qt.KeepAspectRatio,
+            qt.Qt.SmoothTransformation
+        )"""
+    
+    # Build complete Python code
+    python_code = f"""
+import qt
+import base64
+import json
+
+try:
+    # Get slice widget
+    layoutManager = slicer.app.layoutManager()
+    sliceWidget = layoutManager.sliceWidget('{view_name.capitalize()}')
+    
+    if not sliceWidget:
+        __execResult = json.dumps({{"error": f"Slice widget '{view_name.capitalize()}' not found"}})
+    else:
+        # Force render update
+        sliceWidget.sliceView().forceRender()
+        slicer.app.processEvents()
+        
+        # Capture slice view
+        sliceView = sliceWidget.sliceView()
+        pixmap = sliceView.grab(){resize_code}
+        
+        # Convert to QImage
+        qimage = pixmap.toImage()
+        
+        # Save as JPEG to reduce size
+        buffer = qt.QBuffer()
+        buffer.open(qt.QIODevice.WriteOnly)
+        qimage.save(buffer, "JPEG", 85)
+        
+        # Base64 encode - convert QByteArray to bytes properly
+        byte_array = buffer.data()
+        image_bytes = byte_array.data()  # Extract raw bytes from QByteArray
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Return result
+        __execResult = json.dumps({{
+            "success": True,
+            "image": image_base64,
+            "format": "jpeg",
+            "view": "{view_name}",
+            "size": {{"width": qimage.width(), "height": qimage.height()}}
+        }})
+        
+except Exception as e:
+    import traceback
+    __execResult = json.dumps({{
+        "error": str(e),
+        "traceback": traceback.format_exc()
+    }})
+"""
+    return python_code
+
+
+def _parse_slice_screenshot_result(result: dict) -> list:
+    """
+    Parse slice screenshot execution result.
+    
+    Args:
+        result: Dictionary returned from execute_python_code
+    
+    Returns:
+        List of MCP content items (TextContent and/or ImageContent)
+    """
+    if not result["success"]:
+        return [TextContent(
+            type="text",
+            text=f"Code execution failed: {result['message']}"
+        )]
+    
+    try:
+        # Parse JSON response
+        data = json.loads(result["message"])
+        
+        if "error" in data:
+            error_msg = f"Screenshot failed: {data['error']}"
+            if "traceback" in data:
+                error_msg += f"\n\nTraceback:\n{data['traceback']}"
+            return [TextContent(type="text", text=error_msg)]
+        
+        # Extract image and metadata
+        image_base64 = data["image"]
+        metadata = data.get("size", {})
+        
+        # Build concise description text
+        description = f"Successfully captured {data['view']} slice view "
+        description += f"({metadata.get('width', '?')}x{metadata.get('height', '?')})"
+        
+        return [
+            TextContent(type="text", text=description),
+            ImageContent(
+                type="image",
+                data=image_base64,
+                mimeType="image/jpeg"
+            )
+        ]
+        
+    except json.JSONDecodeError as e:
+        return [TextContent(
+            type="text",
+            text=f"JSON parsing failed: {str(e)}\n\nResponse length: {len(result.get('message', ''))} characters"
+        )]
+    except Exception as e:
+        return [TextContent(
+            type="text",
+            text=f"Processing failed: {str(e)}"
+        )]
