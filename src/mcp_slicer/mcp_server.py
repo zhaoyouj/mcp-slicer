@@ -1,5 +1,5 @@
 # server.py
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import TextContent, ImageContent
 import requests
 import json
@@ -7,8 +7,8 @@ import base64
 from urllib.parse import urlparse
 from typing import Optional
 
-# Create an MCP server
-mcp = FastMCP("SlicerMCP")
+# Create an MCP server (MCP SDK 2.x: FastMCP renamed to MCPServer)
+mcp = MCPServer("SlicerMCP")
 
 SLICER_WEB_SERVER_URL = "http://localhost:2016/slicer"
 
@@ -290,7 +290,7 @@ def capture_screenshot(
                 ImageContent(
                     type="image",
                     data=image_base64,
-                    mimeType="image/png"
+                    mime_type="image/png"
                 )
             ]
         else:
