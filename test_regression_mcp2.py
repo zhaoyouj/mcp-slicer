@@ -57,7 +57,7 @@ def test_capture_screenshot_against_slicer() -> None:
     assert texts, result
     assert "Error" not in texts[0].text, texts[0].text
     assert images, f"No image content returned: {result}"
-    assert getattr(images[0], "mime_type", None) == "image/png"
+    assert getattr(images[0], "mime_type", None) == "image/jpeg"
     assert images[0].data, "Empty image payload"
     print(f"[PASS] capture_screenshot: image bytes(b64)={len(images[0].data)}")
 
