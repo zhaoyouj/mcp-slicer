@@ -1,5 +1,5 @@
 # server.py
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import TextContent, ImageContent
 import requests
 import json
@@ -9,8 +9,8 @@ from typing import Optional
 from io import BytesIO
 from PIL import Image
 
-# Create an MCP server
-mcp = FastMCP("SlicerMCP")
+# Create an MCP server (MCP SDK 2.x: FastMCP renamed to MCPServer)
+mcp = MCPServer("SlicerMCP")
 
 SLICER_WEB_SERVER_URL = "http://localhost:2016/slicer"
 
@@ -231,7 +231,7 @@ def capture_screenshot(
             "P" (Posterior), "I" (Inferior), "S" (Superior).
             Only used when ``view_type="3d"``.
 
-        image_size (int | None): Target pixel size for the output image.
+        image_size (Optional[int]): Target pixel size for the output image.
             - For slice views, this is treated as a maximum for the
               longer side of the captured pixmap; the image is scaled
               with preserved aspect ratio up to this size.
@@ -242,20 +242,20 @@ def capture_screenshot(
               size, only that larger values produce higher‑resolution
               images within reasonable limits.
 
-        Returns:
-                list[mcp.types.Content]:
-                        - ``TextContent``: A short, human‑readable description of
-                            what was captured (e.g. which view and approximate size).
-                        - ``ImageContent``: The screenshot image in base64‑encoded
-                            JPEG format when capture succeeds, or omitted if only an
-                            error message is returned.
+    Returns:
+        list[mcp.types.Content]:
+            - ``TextContent``: A short, human‑readable description of
+                what was captured (e.g. which view and approximate size).
+            - ``ImageContent``: The screenshot image in base64‑encoded
+                JPEG format when capture succeeds, or omitted if only an
+                error message is returned.
 
-        Note:
-                This tool is primarily intended for multimodal models. Callers
-                should inspect the returned screenshot with their vision
-                capabilities (rather than relying only on the text summary)
-                when reasoning about Slicer's state, UI layout, overlays, or
-                other visual details.
+    Note:
+        This tool is primarily intended for multimodal models. Callers
+        should inspect the returned screenshot with their vision
+        capabilities (rather than relying only on the text summary)
+        when reasoning about Slicer's state, UI layout, overlays, or
+        other visual details.
 
         The internal capture mechanism (e.g. which Slicer APIs or
         endpoints are used) is considered an implementation detail and may
@@ -301,7 +301,7 @@ def capture_screenshot(
         
         # Check if response is an image
         if response.headers.get('Content-Type', '').startswith('image/'):
-            # Optimize image to reduce size
+            # Optimize image to reduce size for multimodal model context limits
             try:
                 # Open image from response bytes
                 img = Image.open(BytesIO(response.content))
@@ -339,15 +339,24 @@ def capture_screenshot(
                     ImageContent(
                         type="image",
                         data=image_base64,
-                        mimeType="image/jpeg"
+                        mime_type="image/jpeg"
                     )
                 ]
             except Exception as img_error:
                 # Fallback to original image if compression fails
-                return [TextContent(
-                    type="text", 
-                    text=f"Screenshot captured but compression failed: {str(img_error)}. Using original image."
-                )]
+                original_image_base64 = base64.b64encode(response.content).decode('utf-8')
+                original_mime_type = response.headers.get('Content-Type', 'image/png')
+                return [
+                    TextContent(
+                        type="text",
+                        text=f"Screenshot captured but compression failed: {str(img_error)}. Using original image."
+                    ),
+                    ImageContent(
+                        type="image",
+                        data=original_image_base64,
+                        mime_type=original_mime_type
+                    )
+                ]
         else:
             # Unexpected response type
             return [TextContent(type="text", text=f"Error: Unexpected response type: {response.headers.get('Content-Type')}")]
@@ -490,7 +499,7 @@ def _parse_slice_screenshot_result(result: dict) -> list:
             ImageContent(
                 type="image",
                 data=image_base64,
-                mimeType="image/jpeg"
+                mime_type="image/jpeg"
             )
         ]
         
